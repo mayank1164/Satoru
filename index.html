@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JJK: Gojo Satoru — Cursed Technique</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&display=swap');
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            overflow: hidden;
+            background: #000;
+            font-family: 'Orbitron', sans-serif;
+        }
+
+        /* Fullscreen camera */
+        #camera-video {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            object-fit: cover;
+            transform: scaleX(-1);
+            z-index: 1;
+            background: #111;
+        }
+
+        /*
+         * Three.js overlay — mix-blend-mode: screen makes black pixels
+         * transparent, so particles glow on top of camera feed.
+         * This is the KEY fix for camera visibility.
+         */
+        #three-container {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            z-index: 3;
+            pointer-events: none;
+            mix-blend-mode: screen;
+        }
+
+        /* Dim overlay for Warp/Void (darken background) */
+        #dim-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            background: #000;
+            opacity: 0;
+            transition: opacity 0.5s ease-out;
+            z-index: 2;
+            /* Above camera (1), Below particles (3) */
+            pointer-events: none;
+        }
+
+        /* UI */
+        #ui-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 5;
+            pointer-events: none;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+        }
+
+        #top-bar {
+            text-align: center;
+            padding: 28px 20px 0;
+        }
+
+        #top-bar h1 {
+            font-size: clamp(1.8rem, 5vw, 3.2rem);
+            font-weight: 900;
+            letter-spacing: 12px;
+            background: linear-gradient(180deg, #fff 0%, #667 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            filter: drop-shadow(0 0 20px rgba(0, 0, 0, 0.6));
+        }
+
+        #technique-name {
+            font-size: clamp(0.7rem, 2vw, 1.1rem);
+            letter-spacing: 6px;
+            text-transform: uppercase;
+            font-weight: 700;
+            margin-top: 10px;
+            color: #00eeff;
+            text-shadow: 0 0 15px rgba(0, 238, 255, 0.6), 0 0 40px rgba(0, 238, 255, 0.2);
+            transition: color 0.5s, text-shadow 0.5s;
+        }
+
+        #bottom-bar {
+            text-align: center;
+            padding: 0 20px 24px;
+        }
+
+        #status {
+            font-size: 0.65rem;
+            letter-spacing: 3px;
+            color: rgba(255, 255, 255, 0.35);
+            text-transform: uppercase;
+        }
+
+        #vignette {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 4;
+            background: radial-gradient(ellipse at center, transparent 50%, rgba(0, 0, 0, 0.5) 100%);
+        }
+
+        #grain {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 4;
+            opacity: 0.04;
+            background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='1'/%3E%3C/svg%3E");
+        }
+    </style>
+
+    <script type="importmap">
+        { "imports": {
+            "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+            "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+        }}
+    </script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+</head>
+
+<body>
+
+    <video id="camera-video" autoplay playsinline muted></video>
+    <div id="three-container"></div>
+    <canvas id="debug-canvas"></canvas>
+    <div id="vignette"></div>
+    <div id="grain"></div>
+
+    <div id="ui-overlay">
+        <div id="top-bar">
+            <h1>呪術廻戦</h1>
+            <div id="technique-name">CURSED ENERGY DETECTED</div>
+        </div>
+        <div id="bottom-bar">
+            <div id="status">SAT0RU SYSTEM ACTIVE</div>
+        </div>
+    </div>
+    </div>
+    <div id="dim-overlay"></div>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+        import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+        import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+        import CONFIG from './config.js';
+
+        // ============================================================
+        //  THREE.JS SETUP
+        // ============================================================
+        //  THREE.JS SETUP
+        // ============================================================
+        const threeContainer = document.getElementById('three-container');
+        const dimOverlay = document.getElementById('dim-overlay'); // Reference to overlay
+        const scene = new THREE.Scene();
+        const cam3d = new THREE.PerspectiveCamera(CONFIG.CAMERA.fov, window.innerWidth / window.innerHeight, 0.1, 1000);
+        cam3d.position.z = CONFIG.CAMERA.cameraZ;
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        renderer.setClearColor(0x000000, 1); // Black bg — screen blend makes it transparent
+        threeContainer.appendChild(renderer.domElement);
+
+        const composer = new EffectComposer(renderer);
+        composer.addPass(new RenderPass(scene, cam3d));
+        const bloomPass = new UnrealBloomPass(
+            new THREE.Vector2(window.innerWidth, window.innerHeight), CONFIG.BLOOM.defaultStrength, CONFIG.BLOOM.radius, CONFIG.BLOOM.threshold
+        );
+        composer.addPass(bloomPass);
+
+        // ---- Screen → World conversion ----
+        function screenToWorld(sx, sy) {
+            const fov = cam3d.fov * Math.PI / 180;
+            const halfH = cam3d.position.z * Math.tan(fov / 2);
+            const halfW = halfH * cam3d.aspect;
+            return new THREE.Vector3(
+                ((sx / window.innerWidth) - 0.5) * 2 * halfW,
+                -((sy / window.innerHeight) - 0.5) * 2 * halfH,
+                0
+            );
+        }
+
+        // ============================================================
+        //  PARTICLE SYSTEM FACTORY — creates independent ball systems
+        // ============================================================
+        const BALL_COUNT = CONFIG.BALL_COUNT;
+
+        function createBallSystem() {
+            const geo = new THREE.BufferGeometry();
+            const pos = new Float32Array(BALL_COUNT * 3);
+            const col = new Float32Array(BALL_COUNT * 3);
+            const siz = new Float32Array(BALL_COUNT);
+            const tPos = new Float32Array(BALL_COUNT * 3);
+            const tCol = new Float32Array(BALL_COUNT * 3);
+            const tSiz = new Float32Array(BALL_COUNT);
+
+            geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+            geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+            geo.setAttribute('size', new THREE.BufferAttribute(siz, 1));
+
+            const pts = new THREE.Points(geo, new THREE.PointsMaterial({
+                size: CONFIG.PARTICLE_BASE_SIZE, vertexColors: true, blending: THREE.AdditiveBlending,
+                transparent: true, depthWrite: false
+            }));
+            pts.visible = false;
+            scene.add(pts);
+
+            return {
+                points: pts, geo,
+                pos, col, siz,
+                tPos, tCol, tSiz,
+                worldPos: new THREE.Vector3(0, 0, 0),
+                targetWorldPos: new THREE.Vector3(0, 0, 0),
+                currentShape: '',
+                visible: false,
+                opacity: 0, // 0..1 for fade in/out
+            };
+        }
+
+        const redSystem = createBallSystem();
+        const blueSystem = createBallSystem();
+        const voidSystem = createBallSystem();  // Independent void black hole
+
+        // ============================================================
+        //  PARTICLE SHAPE GENERATORS
+        // ============================================================
+        function genRed(i) {
+            const C = CONFIG.RED;
+            if (i < BALL_COUNT * C.coreRatio) {
+                const r = Math.random() * C.coreRadius;
+                const th = Math.random() * 6.28, ph = Math.acos(2 * Math.random() - 1);
+                return { x: r * Math.sin(ph) * Math.cos(th), y: r * Math.sin(ph) * Math.sin(th), z: r * Math.cos(ph), r: C.coreColor.r, g: C.coreColor.g, b: C.coreColor.b, s: C.coreSize };
+            }
+            const t = i / BALL_COUNT;
+            const angle = t * C.spiralSpeed + ((i % C.arms) * (Math.PI * 2 / C.arms));
+            const radius = C.spiralStartRadius + t * C.spiralRadius;
+            return { x: radius * Math.cos(angle), y: radius * Math.sin(angle), z: (Math.random() - 0.5) * (C.spiralDepth * t), r: C.armColor.r, g: C.armColor.g, b: C.armColor.b, s: C.armSize };
+        }
+
+        function genBlue(i) {
+            const C = CONFIG.BLUE;
+            if (i < BALL_COUNT * C.coreRatio) {
+                const r = Math.random() * C.coreRadius;
+                const th = Math.random() * 6.28, ph = Math.acos(2 * Math.random() - 1);
+                return { x: r * Math.sin(ph) * Math.cos(th), y: r * Math.sin(ph) * Math.sin(th), z: r * Math.cos(ph), r: C.coreColor.r, g: C.coreColor.g, b: C.coreColor.b, s: C.coreSize };
+            }
+            const t = i / BALL_COUNT;
+            const angle = -(t * C.spiralSpeed + ((i % C.arms) * (Math.PI * 2 / C.arms)));
+            const radius = C.spiralStartRadius + t * C.spiralRadius;
+            return { x: radius * Math.cos(angle), y: radius * Math.sin(angle), z: (Math.random() - 0.5) * (C.spiralDepth * t), r: C.armColor.r, g: C.armColor.g, b: C.armColor.b, s: C.armSize };
+        }
+
+        function genPurple(i) {
+            const C = CONFIG.PURPLE;
+            if (Math.random() > C.coreRatio) return { x: (Math.random() - 0.5) * C.outerSpread, y: (Math.random() - 0.5) * C.outerSpread, z: (Math.random() - 0.5) * C.outerSpread, r: C.outerColor.r, g: C.outerColor.g, b: C.outerColor.b, s: C.outerSize };
+            const r = C.coreRadius, th = Math.random() * Math.PI * 2, ph = Math.acos(2 * Math.random() - 1);
+            return { x: r * Math.sin(ph) * Math.cos(th), y: r * Math.sin(ph) * Math.sin(th), z: r * Math.cos(ph), r: C.coreColor.r, g: C.coreColor.g, b: C.coreColor.b, s: C.coreSize };
+        }
+
+        function genPurpleBall(i) {
+            // Reuse Red spiral logic but with Purple colors
+            const C = CONFIG.RED;
+            if (i < BALL_COUNT * C.coreRatio) {
+                const r = Math.random() * C.coreRadius;
+                const th = Math.random() * 6.28, ph = Math.acos(2 * Math.random() - 1);
+                // Core: Bright light purple
+                return {
+                    x: r * Math.sin(ph) * Math.cos(th), y: r * Math.sin(ph) * Math.sin(th), z: r * Math.cos(ph),
+                    r: 0.8, g: 0.6, b: 1.0, s: C.coreSize
+                };
+            }
+            const t = i / BALL_COUNT;
+            const angle = t * C.spiralSpeed + ((i % C.arms) * (Math.PI * 2 / C.arms));
+            const radius = C.spiralStartRadius + t * C.spiralRadius;
+            // Arms: Deep purple
+            const depth = C.spiralDepth || 10;
+            return {
+                x: radius * Math.cos(angle), y: radius * Math.sin(angle), z: (Math.random() - 0.5) * (depth * t),
+                r: 0.6, g: 0.0, b: 1.0, s: C.armSize
+            };
+        }
+
+        // ---- Warp speed particle streaks (du hành thời gian) ----
+        function genWarp(i) {
+            const C = CONFIG.VOID;
+            // Streaks bay ngang (Horizontal) - Distribution wide X, narrow Y/Z
+            const y = (Math.random() - 0.5) * 60; // Spread vertical
+            const z = (Math.random() - 0.5) * 60; // Spread depth
+            const x = (Math.random() - 0.5) * 400; // Wide X spread
+
+            // Màu: Trắng hoặc Tím
+            const isWhite = Math.random() > 0.4; // More white for stars
+            return {
+                x: x, y: y, z: z,
+                r: isWhite ? 1.0 : 0.7,
+                g: isWhite ? 1.0 : 0.0,
+                b: isWhite ? 1.0 : 1.0,
+                // Random size to simulate distance/speed
+                s: 0.5 + Math.random() * 3.0
+            };
+        }
+
+        function genVoid(i) {
+            const C = CONFIG.VOID;
+            const t = i / BALL_COUNT;
+
+            // Layer 1: Bright accretion ring (main glowing torus)
+            if (t < 0.25) {
+                const angle = Math.random() * Math.PI * 2;
+                const ringR = C.ringRadius + (Math.random() - 0.5) * 4;
+                const thickness = (Math.random() - 0.5) * 2;
+                const brightness = 1.5 + Math.random() * 1.5;
+                return {
+                    x: ringR * Math.cos(angle), y: ringR * Math.sin(angle), z: thickness,
+                    r: C.ringColor.r * brightness, g: C.ringColor.g * brightness, b: C.ringColor.b * brightness, s: C.ringSize * (0.8 + Math.random() * 0.6)
+                };
+            }
+            // Layer 2: Inner glow ring (closer to event horizon)
+            if (t < 0.40) {
+                const angle = Math.random() * Math.PI * 2;
+                const innerR = C.ringRadius * 0.6 + (Math.random() - 0.5) * 3;
+                return {
+                    x: innerR * Math.cos(angle), y: innerR * Math.sin(angle), z: (Math.random() - 0.5) * 1.5,
+                    r: 0.3, g: 0.6, b: 1.2, s: C.ringSize * 0.7
+                };
+            }
+            // Layer 3: Accretion disk (flat band, tilted look)
+            if (t < 0.60) {
+                const diskR = C.ringRadius * (0.4 + Math.random() * 0.8);
+                const angle = Math.random() * Math.PI * 2;
+                const diskTilt = 0.15; // slight tilt
+                return {
+                    x: diskR * Math.cos(angle), y: diskR * Math.sin(angle) * diskTilt, z: diskR * Math.sin(angle) * 0.3,
+                    r: 0.15, g: 0.35, b: 0.7, s: 0.6 + Math.random() * 0.4
+                };
+            }
+            // Layer 4: Orbital debris / scattered particles
+            if (t < 0.80) {
+                const orbitR = C.ringRadius + Math.random() * 30;
+                const angle = Math.random() * Math.PI * 2;
+                const spread = (Math.random() - 0.5) * 15;
+                return {
+                    x: orbitR * Math.cos(angle), y: orbitR * Math.sin(angle), z: spread,
+                    r: 0.1, g: 0.3, b: 0.6, s: 0.3 + Math.random() * 0.5
+                };
+            }
+            // Layer 5: Far scattered stars/dust
+            const farR = C.outerMinRadius + Math.random() * (C.outerMaxRadius - C.outerMinRadius);
+            const th = Math.random() * Math.PI * 2, ph = Math.acos(2 * Math.random() - 1);
+            return {
+                x: farR * Math.sin(ph) * Math.cos(th), y: farR * Math.sin(ph) * Math.sin(th), z: farR * Math.cos(ph),
+                r: C.outerColor.r, g: C.outerColor.g, b: C.outerColor.b, s: C.outerSize * (0.3 + Math.random() * 0.5)
+            };
+        }
+
+        function genEmpty(i) {
+            return { x: 0, y: 0, z: 0, r: 0, g: 0, b: 0, s: 0 };
+        }
+
+        function setShape(sys, genFn) {
+            for (let i = 0; i < BALL_COUNT; i++) {
+                const p = genFn(i);
+                sys.tPos[i * 3] = p.x; sys.tPos[i * 3 + 1] = p.y; sys.tPos[i * 3 + 2] = p.z;
+                sys.tCol[i * 3] = p.r; sys.tCol[i * 3 + 1] = p.g; sys.tCol[i * 3 + 2] = p.b;
+                sys.tSiz[i] = p.s;
+            }
+        }
+
+        // ============================================================
+        //  STATE
+        // ============================================================
+        let currentTechnique = 'neutral';
+        let purpleMode = false;
+        let purpleController = null; // 'left' or 'right' — which finger controls purple
+        let shakeIntensity = 0;
+        // Pointing fire cooldown
+        let snapCooldown = 0;
+
+        // Projectile
+        let projectileActive = false;
+        let projectileTimer = 0;
+        let projectileSystem = null; // which system is flying
+        let projectileDir = new THREE.Vector3();
+
+        // Fire charge state (3-finger charge → fire)
+        let chargeActive = false;
+        let chargeTimer = 0;
+        let chargeHand = null;  // 'left' or 'right'
+
+        // Fusion animation state (binary star orbit → collision → purple)
+        let fusionActive = false;
+        let fusionPhase = 0;       // 0=not active, 1=orbit, 2=spiral, 3=explosion
+        let fusionAngle = 0;
+        let fusionRadius = 0;
+        let fusionSpeed = 0;
+        let fusionTimer = 0;
+        let fusionCenter = new THREE.Vector3();  // midpoint of the two fingers
+
+        // Void state
+        let voidPhase = 0;   // 0=off, 1=warp speed (intro), 2=black hole (main)
+        let voidTimer = 0;
+
+        // ---- Gesture helpers ----
+        function isFingerExtended(lm, tip, pip) { return lm[tip].y < lm[pip].y; }
+        function isOnlyIndexExtended(lm) {
+            return isFingerExtended(lm, 8, 6) && !isFingerExtended(lm, 12, 10)
+                && !isFingerExtended(lm, 16, 14) && !isFingerExtended(lm, 20, 18);
+        }
+        function isCrossedFingers(lm) {
+            if (!isFingerExtended(lm, 8, 6) || !isFingerExtended(lm, 12, 10)) return false;
+            return Math.hypot(lm[8].x - lm[12].x, lm[8].y - lm[12].y) < CONFIG.DETECTION.crossedFingerThreshold;
+        }
+        function detectPointing(lm) {
+            // Bắn: dơ ngón trỏ + áp út + út (đồng thời), ngón giữa co
+            return isFingerExtended(lm, 8, 6)
+                && !isFingerExtended(lm, 12, 10)
+                && isFingerExtended(lm, 16, 14)
+                && isFingerExtended(lm, 20, 18);
+        }
+        function lmToScreen(lm) {
+            return { x: (1 - lm.x) * window.innerWidth, y: lm.y * window.innerHeight };
+        }
+
+        // ============================================================
+        //  HAND RESULTS
+        // ============================================================
+        const videoEl = document.getElementById('camera-video');
+        const techniqueNameEl = document.getElementById('technique-name');
+
+        const hands = new Hands({ locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}` });
+        hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: CONFIG.DETECTION.minDetectionConfidence, minTrackingConfidence: CONFIG.DETECTION.minTrackingConfidence });
+        hands.onResults(onHandResults);
+
+        function onHandResults(results) {
+            let leftIndex = null, rightIndex = null;
+            let leftCrossed = false, rightCrossed = false;
+            let leftSnap = false, righ
